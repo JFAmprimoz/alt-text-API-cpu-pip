@@ -8,23 +8,18 @@ import torch
 from transformers import Blip2Processor, Blip2ForConditionalGeneration
 
 
-processor = model = device = None
+processor = model = None
 
-def prepare_model():
-    global processor, model, device
-    device_dtype = torch.float16 if torch.cuda.is_available() else torch.bfloat16
+def prepare_model(model_path):
+    global processor, model
     
-    processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
-    model = Blip2ForConditionalGeneration.from_pretrained("Salesforce/blip2-opt-2.7b"
-                                                      , device_map='auto'
-                                                      , offload_folder="offload"
-                                                      , torch_dtype=device_dtype
+    processor = Blip2Processor.from_pretrained(model_path)
+    model = Blip2ForConditionalGeneration.from_pretrained(model_path
+                                                      , torch_dtype=torch.bfloat16
                                                      )
     model = torch.compile(model)
 
-    #var to use cuda gpu if available for preprocessing
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    return processor, model, device
+    return processor, model
 
 def image_closed(im):
     try:
@@ -47,16 +42,16 @@ def image_from_base64(base64_string:str):
     return Image.open(BytesIO(img_file))
 
 
-def caption_image(image: IO, cap_processor: object, cap_model: object, cap_device: str):
+def caption_image(image: IO, cap_processor: object, cap_model: object):
     raw_image = image.convert('RGB')
-    inputs = cap_processor(raw_image, return_tensors="pt").to(cap_device, torch.float16)
+    inputs = cap_processor(raw_image, return_tensors="pt").to(torch.float16)
     out = cap_model.generate(**inputs, max_new_tokens=20)
 
     caption_txt = cap_processor.decode(out[0], skip_special_tokens=True)
 
     return caption_txt
 
-prepare_model()
+prepare_model('Salesforce/blip2-opt-2.7b')
 
 app = FastAPI()
 
@@ -68,7 +63,7 @@ async def read_root():
 @app.post("/caption-url/")
 async def caption_url(img_url: Annotated[str, Body(embed=True)]):
     image = image_from_url(img_url)
-    caption = caption_image(image, processor, model, device)
+    caption = caption_image(image, processor, model)
     image.close()
     image_closed_explicit = image_closed(image)
     
@@ -80,7 +75,7 @@ async def caption_url(img_url: Annotated[str, Body(embed=True)]):
 @app.post("/caption-file/")
 async def caption_file(img_file: bytes = File(...)):
     image = image_from_file(img_file)
-    caption = caption_image(image, processor, model, device)
+    caption = caption_image(image, processor, model)
     image.close()
     image_closed_explicit = image_closed(image)
     
@@ -98,7 +93,7 @@ async def encode_file(img_file: bytes = File(...)):
 @app.post("/caption-base64/")
 async def caption_base64(base64_string: Annotated[str, Body(embed=True)]):
     image = image_from_base64(base64_string)
-    caption = caption_image(image, processor, model, device)
+    caption = caption_image(image, processor, model)
     image.close()
     image_closed_explicit = image_closed(image)
     
